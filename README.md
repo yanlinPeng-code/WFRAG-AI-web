@@ -415,7 +415,155 @@ services:
 
 ## 七、注意事项
 - 在部署前，请确保已经正确配置了所有的环境变量，特别是数据库连接信息、API 密钥等。
+
 - 如果需要修改服务的配置参数，可以直接在 `docker-compose.yaml` 文件中进行调整。
+
+- 由于该项目是同步适配项目，对于mcp服务，作者占时没有想到适配异步工具的方法。
+
+- 如果要适配mcp服务，请你修改langchain_mcp_adapter的源码，这里有简单的例子,这是笔者的拙劣见解，还希望大佬能够找到一种更好的方法。我也会多多学习，另外，当部署时，mcp功能会受限。
+
+  在 StructuredTool包中加入以下
+
+  ```python
+  def _run(
+        self,
+        *args: Any,
+        config: RunnableConfig,
+        run_manager: Optional[CallbackManagerForToolRun] = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Use the tool."""
+        if self.func:
+            if run_manager and signature(self.func).parameters.get("callbacks"):
+                kwargs["callbacks"] = run_manager.get_child()
+            if config_param := _get_runnable_config_param(self.func):
+                kwargs[config_param] = config
+            return self.func(*args, **kwargs)
+        msg = "StructuredTool does not support sync invocation."
+        raise NotImplementedError(msg)
+  ```
+
+  在langchain_mcp_adapters 的  tools中修改以下代码
+
+  
+
+      async def load_mcp_tools(
+          session: ClientSession | None,
+          *,
+          connection: Connection | None = None,
+      ) -> list[BaseTool]:
+          """Load all available MCP tools and convert them to LangChain tools.
+      
+          Returns:
+              list of LangChain tools. Tool annotations are returned as part
+              of the tool metadata object.
+          """
+          if session is None and connection is None:
+              raise ValueError("Either a session or a connection config must be provided")
+          
+          if session is None:
+              # If a session is not provided, we will create one on the fly
+              async with create_session(connection) as tool_session:
+                  await tool_session.initialize()
+                  tools = await tool_session.list_tools()
+          else:
+              tools = await session.list_tools()
+          
+          converted_tools = [
+              convert_mcp_tool_to_langchain_tool_sync(session, tool, connection=connection)
+              for tool in tools.tools
+          ]
+          return converted_tools
+
+  
+
+  ```python
+  def convert_mcp_tool_to_langchain_tool_sync(
+      session: ClientSession | None,
+      tool: MCPTool,
+      *,
+      connection: Connection | None = None,
+  ) -> BaseTool:
+      """Convert an MCP tool to a LangChain tool in a synchronous manner.
+      NOTE: This tool runs MCP operations by blocking the current thread using `asyncio.run()`.
+        It should NOT be called from within an already running asyncio event loop,
+        as this will raise a `RuntimeError`.
+  
+  Args:
+      session: An existing MCP client session. If provided, `connection` is ignored.
+      tool: The MCP tool to convert.
+      connection: Optional connection configuration to use to create a new session
+                  if a `session` is not provided.
+  
+  Returns:
+      A LangChain `BaseTool` that can be called synchronously.
+  """
+  if session is None and connection is None:
+      raise ValueError("Either a session or a connection config must be provided")
+  
+  # Modified call_tool_sync to accept arguments more flexibly
+  def call_tool_sync(
+      *args: Any, # Accept positional arguments
+      callbacks: Optional[CallbackManagerForToolRun] = None, # LangChain might pass this
+      config: Optional[RunnableConfig] = None, # LangChain might pass this
+      **kwargs: Any, # Accept keyword arguments
+  ) -> Tuple[str | List[str], List[NonTextContent] | None]:
+      """
+      Synchronous wrapper for the asynchronous MCP tool call.
+      This function uses asyncio.run() to execute the underlying async logic.
+      It is designed to handle arguments passed by LangChain's Tool.run method.
+      """
+      arguments: dict[str, Any] = {}
+  
+      # If LangChain passes a single positional argument, assume it's the main input
+      if args:
+          # If args_schema has a single top-level key like 'query', it might be passed directly
+          # If the schema implies a dict, LangChain might pass a dict as the single arg
+          if len(args) == 1 and isinstance(args[0], dict):
+              arguments = args[0]
+          elif len(tool.inputSchema.get("properties", {})) == 1 and "type" in tool.inputSchema and tool.inputSchema["type"] == "object":
+              # If the schema is a single-property object, try to map the positional arg
+              single_prop_name = list(tool.inputSchema["properties"].keys())[0]
+              arguments[single_prop_name] = args[0]
+          else:
+              # Fallback: Treat positional args as values if the schema is simpler or if it's the expected way
+              # This part might need fine-tuning based on your exact MCPTool inputSchema
+              # For now, let's assume if it's a single arg, it's the primary input.
+              # If it's a dict, it's already structured.
+              arguments = {"input": args[0]} if len(args) == 1 else {"args_list": list(args)} # Example handling
+              # A more robust approach might parse args based on tool.inputSchema
+              print(f"Warning: Positional arguments provided. Attempting to convert: {args}")
+  
+      # Merge with keyword arguments
+      arguments.update(kwargs)
+  
+      async def _run_async_call():
+          """The actual asynchronous logic to be executed."""
+          if session is None:
+              # If a session is not provided, create one on the fly.
+              async with create_session(connection) as tool_session:
+                  call_tool_result = await cast(ClientSession, tool_session).call_tool(
+                      tool.name, arguments
+                  )
+          else:
+              # Use the provided session.
+              call_tool_result = await session.call_tool(tool.name, arguments)
+          return _convert_call_tool_result(call_tool_result)
+  
+      # Execute the asynchronous logic synchronously, blocking the current thread.
+      return asyncio.run(_run_async_call())
+  
+  # Create a LangChain StructuredTool with the synchronous `func` attribute.
+  return StructuredTool(
+      name=tool.name,
+      description=tool.description or "",
+      args_schema=tool.inputSchema,
+      func=call_tool_sync,  # Use 'func' for synchronous tools
+      response_format="content_and_artifact",
+      metadata=tool.annotations.model_dump() if tool.annotations else None,
+  )
+  ```
+
 - 确保服务器上的端口没有被其他服务占用，避免启动失败。
 
 通过以上步骤，你可以顺利部署和运行 LLMOps 原生 AI 应用开发平台项目。
