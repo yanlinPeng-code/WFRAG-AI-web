@@ -1,0 +1,7 @@
+.env
+tmp/*
+storage/*
+.idea/*
+venv/*
+/study/*
+/tmp/*

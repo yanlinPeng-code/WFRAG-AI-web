@@ -1,0 +1,158 @@
+from flask_wtf import FlaskForm
+from marshmallow import Schema, fields, pre_dump
+from wtforms.fields.simple import StringField
+from wtforms.validators import DataRequired, ValidationError, Length, URL, Optional
+
+from internal.model import McpTool, McpToolProvider
+from internal.schema import ListField
+from pkg.paginator import PaginatorReq
+
+
+class ValidateMcpSchemaReq(FlaskForm):
+    mcp_schema = StringField("mcp_schema",
+                             validators=[DataRequired("MCP Schema不能为空")])
+
+
+class CreateMcpBatchToolReq(FlaskForm):
+    """创建自定义API工具请求"""
+
+    mcp_schema = StringField("mcp_schema",
+                             validators=[DataRequired("MCP Schema不能为空")])
+
+
+class CreateMcpToolReq(FlaskForm):
+    """创建自定义API工具请求"""
+
+    name = StringField("name",
+                       validators=[DataRequired("工具名称不能为空")])
+    icon = StringField("icon",
+
+                       validators=[DataRequired("图标不能为空"), URL(message="工具提供者的图标必须是URL链接"), ])
+    description = StringField("description",
+                              validators=[DataRequired("描述不能为空")])
+    mcp_schema = StringField("mcp_schema",
+                             validators=[DataRequired("MCP Schema不能为空")])
+
+    headers = ListField("headers", default=[])
+
+    @classmethod
+    def validate_headers(cls, form, field):
+        """校验headers请求的数据是否正确，涵盖列表校验，列表元素校验"""
+        for header in field.data:
+            if not isinstance(header, dict):
+                raise ValidationError("headers里的每一个元素都必须是字典")
+            if set(header.keys()) != {"key", "value"}:
+                raise ValidationError("headers里的每一个元素都必须包含key/value两个属性，不允许有其他属性")
+
+
+class UpdateMcpToolProviderReq(FlaskForm):
+    """更新MCP工具提供者请求"""
+    name = StringField("name", validators=[
+        DataRequired(message="工具提供者名字不能为空"),
+        Length(min=1, max=30, message="工具提供者的名字长度在1-30"),
+    ])
+    icon = StringField("icon", validators=[
+        DataRequired(message="工具提供者的图标不能为空"),
+        URL(message="工具提供者的图标必须是URL链接"),
+    ])
+    description = StringField("description", validators=[
+        DataRequired(message="工具提供者的描述不能为空"),
+    ])
+    mcp_schema = StringField("openapi_schema", validators=[
+        DataRequired(message="openapi_schema字符串不能为空")
+    ])
+    headers = ListField("headers", default=[])
+
+    @classmethod
+    def validate_headers(cls, form, field):
+        """校验headers请求的数据是否正确，涵盖列表校验，列表元素校验"""
+        for header in field.data:
+            if not isinstance(header, dict):
+                raise ValidationError("headers里的每一个元素都必须是字典")
+            if set(header.keys()) != {"key", "value"}:
+                raise ValidationError("headers里的每一个元素都必须包含key/value两个属性，不允许有其他属性")
+
+
+class GetMcpToolResp(Schema):
+    """获取Mcp工具参数详情响应"""
+    id = fields.UUID()
+    name = fields.String()
+    description = fields.String()
+    inputs = fields.List(fields.Dict, dump_default=[])
+    provider = fields.Dict()
+
+    @pre_dump
+    def process_data(self, data: McpTool, **kwargs):
+        provider = data.provider
+        return {
+            "id": data.id,
+            "name": data.name,
+            "description": data.description,
+            "inputs": [{k: v for k, v in parameter.items() if k != "in"} for parameter in data.parameters],
+            "provider": {
+                "id": provider.id,
+                "name": provider.name,
+                "icon": provider.icon,
+                "description": provider.description,
+                "headers": provider.headers,
+            }
+        }
+
+
+class GetMcpToolProviderResp(Schema):
+    """获取mcp工具提供者响应信息"""
+    id = fields.UUID()
+    name = fields.String()
+    icon = fields.String()
+    description = fields.String()
+    mcp_schema = fields.String()
+    headers = fields.List(fields.Dict, dump_default=[])
+    created_at = fields.Integer(dump_default=0)
+
+    @pre_dump
+    def process_data(self, data: McpToolProvider, **kwargs):
+        return {
+            "id": data.id,
+            "name": data.name,
+            "description": data.description,
+            "icon": data.icon,
+            "mcp_schema": data.mcp_schema,
+            "headers": data.headers,
+            "created_at": int(data.created_at.timestamp()),
+        }
+
+
+class GetMcpToolProvidersWithPageReq(PaginatorReq):
+    """获取mcp工具提供者分页列表请求"""
+    search_word = StringField("search_word", validators=[
+        Optional()
+    ])
+
+
+class GetMcpToolProvidersWithPageResp(Schema):
+    """获取API工具提供者分页列表数据响应"""
+    id = fields.UUID()
+    name = fields.String()
+    icon = fields.String()
+    description = fields.String()
+    headers = fields.List(fields.Dict, dump_default=[])
+    tools = fields.List(fields.Dict, dump_default=[])
+    created_at = fields.Integer(dump_default=0)
+
+    @pre_dump
+    def process_data(self, data: McpToolProvider, **kwargs):
+        tools = data.tools
+        return {
+            "id": data.id,
+            "name": data.name,
+            "icon": data.icon,
+            "description": data.description,
+            "headers": data.headers,
+            "tools": [{
+                "id": tool.id,
+                "description": tool.description,
+                "name": tool.name,
+                "inputs": [{k: v for k, v in parameter.items() if k != "in"} for parameter in tool.parameters]
+            } for tool in tools],
+            "created_at": int(data.created_at.timestamp())
+        }
