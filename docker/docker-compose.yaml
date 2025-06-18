@@ -236,9 +236,9 @@ services:
       CLUSTER_HOSTNAME: 'node1'  # 节点的主机名字
       AUTHENTICATION_APIKEY_ENABLED: 'true'  # 启动基于API秘钥的身份校验
       AUTHENTICATION_APIKEY_ALLOWED_KEYS: 'ftBC9hKkjfdbdi0wW3T6kEtMh5BZFpGa1DF8'  # 允许的API秘钥列表
-      AUTHENTICATION_APIKEY_USERS: 'llmops@imooc.com'  # 基于秘钥的API身份列表
+      AUTHENTICATION_APIKEY_USERS: 'llmops@peng.com'  # 基于秘钥的API身份列表
       AUTHORIZATION_ADMINLIST_ENABLED: 'true'  # 启动AdminList授权方案
-      AUTHORIZATION_ADMINLIST_USERS: 'llmops@imooc.com'  # 使用AdminList方案时具有管理权限的用户
+      AUTHORIZATION_ADMINLIST_USERS: 'llmops@peng.com'  # 使用AdminList方案时具有管理权限的用户
     volumes:
       - ./volumes/weaviate:/var/lib/weaviate
     ports:
